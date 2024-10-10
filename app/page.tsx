@@ -87,7 +87,7 @@ export default function Home() {
   return (
     <div className="w-full flex justify-center flex-col items-center mt-10">
       {/* タイトル */}
-      <h1 className="text-3xl font-bold mt-4">顔座標取得君</h1>
+      <h1 className="text-3xl font-bold mt-4">顔マスク君</h1>
 
       {/* ドロップゾーン */}
       {!filePreview && (
