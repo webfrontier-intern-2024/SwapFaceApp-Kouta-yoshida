@@ -1,5 +1,6 @@
-"use client";
-import React, { useState, useEffect } from 'react';
+"use client"; // これによりコンポーネントがクライアントコンポーネントとしてマークされます
+
+import React, { useState, useEffect, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
 import Button from '@mui/material/Button'; // Material-UIのButtonコンポーネントをインポート
 
@@ -14,29 +15,29 @@ interface Datas {
 export default function Home() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [filePreview, setFilePreview] = useState<string | null>(null);
-  const [faceCoordinates, setFaceCoordinates] = useState<any[]>([]);
   const [jsonData, setJsonData] = useState<Datas | null>(null);
+  const [finalImageSrc, setFinalImageSrc] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null); // エラーメッセージ用のステートを追加
+  const maskImageSrc = "/images/kao.png"; // public/images フォルダ内にある場合
+  const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // 顔座標を取得する処理
+  // 顔座標を取得し、マスクを描画する処理
   const getFaceCoordinates = async () => {
     if (!selectedFile) return;
 
-    // フォームデータを作成
     const formData = new FormData();
     formData.append('file', selectedFile);
 
     try {
-      // Next.jsのAPIルートにリクエストを送信
       const apiUrl = "/api/upload";
       const response = await fetch(apiUrl, {
         method: 'POST',
-        body: formData, // ファイルを含んだフォームデータを送信
+        body: formData,
       });
 
       if (response.ok) {
         const result = await response.json();
 
-        // result.box が正しく取得できる場合
         if (result.box) {
           const data = result.box;
           const datas: Datas = {
@@ -44,13 +45,20 @@ export default function Home() {
             y_max: data.y_max,
             x_min: data.x_min,
             y_min: data.y_min,
-            probability: data.probability || 1, // probabilityを修正
+            probability: data.probability || 1,
           };
           setJsonData(datas);
-          setFaceCoordinates([datas]); // faceCoordinatesに新しいデータを設定
+          setErrorMessage(null); // エラーメッセージをリセット
+
+          // 座標をもとにマスク描画
+          await drawMaskOnCanvas(datas);
+        } else {
+          // 顔が検出されなかった場合のエラーメッセージ
+          setErrorMessage('顔が検出されませんでした。別の画像を試してください。');
         }
       } else {
         console.error('APIリクエストが失敗しました');
+        setErrorMessage('APIリクエストに失敗しました。');
       }
     } catch (error) {
       console.error('Error:', error);
@@ -66,27 +74,69 @@ export default function Home() {
     }
   }, [selectedFile]);
 
-  // ドロップゾーンの設定
   const { getRootProps, getInputProps } = useDropzone({
     accept: { "image/*": [".png", ".jpeg", ".jpg"] },
     onDrop: (acceptedFiles) => {
       if (acceptedFiles.length > 0) {
         setSelectedFile(acceptedFiles[0]);
-        setFaceCoordinates([]); // 新しい画像を選択したら顔座標をリセット
+        setJsonData(null); // 新しい画像を選択したら座標データをリセット
+        setFinalImageSrc(null); // 結果画像もリセット
+        setErrorMessage(null); // エラーメッセージをリセット
       }
     },
   });
 
-  // 画像を削除する処理
   const handleDeleteImage = () => {
     setSelectedFile(null);
     setFilePreview(null);
-    setFaceCoordinates([]);
+    setJsonData(null);
+    setFinalImageSrc(null); // 結果画像をリセット
+    setErrorMessage(null); // エラーメッセージをリセット
+  };
+
+  // マスクを描画する処理
+  const drawMaskOnCanvas = async (coords: Datas) => {
+    const canvas = canvasRef.current;
+    if (!canvas || !filePreview) return;
+
+    const ctx = canvas.getContext('2d');
+    const imageA = new Image();
+    imageA.src = filePreview;
+
+    const maskImage = new Image();
+    maskImage.src = maskImageSrc;
+
+    // 画像が読み込まれるのを待つ
+    await new Promise((resolve) => {
+      imageA.onload = resolve;
+    });
+
+    await new Promise((resolve) => {
+      maskImage.onload = resolve;
+    });
+
+    canvas.width = imageA.width;
+    canvas.height = imageA.height;
+
+    ctx?.drawImage(imageA, 0, 0);
+
+    const maskWidth = coords.x_max - coords.x_min;
+    const maskHeight = coords.y_max - coords.y_min;
+
+    // デバッグ用のコンソールログ
+    console.log('顔座標:', coords);
+    console.log('マスクの幅:', maskWidth, '高さ:', maskHeight);
+
+    // 座標に基づいてマスクを描画
+    ctx?.drawImage(maskImage, coords.x_min, coords.y_min, maskWidth, maskHeight);
+
+    // 結果画像を生成して保存
+    const finalImage = canvas.toDataURL();
+    setFinalImageSrc(finalImage); // finalImageSrc に保存
   };
 
   return (
     <div className="w-full flex justify-center flex-col items-center mt-10">
-      {/* タイトル */}
       <h1 className="text-3xl font-bold mt-4">顔マスク君</h1>
 
       {/* ドロップゾーン */}
@@ -103,8 +153,13 @@ export default function Home() {
         </div>
       )}
 
+      {/* エラーメッセージの表示 */}
+      {errorMessage && (
+        <div className="mt-4 text-red-600">{errorMessage}</div>
+      )}
+
       {/* プレビュー表示 */}
-      {filePreview && (
+      {filePreview && !finalImageSrc && (
         <div className="mt-4">
           <img
             src={filePreview}
@@ -114,20 +169,33 @@ export default function Home() {
         </div>
       )}
 
-      {/* 顔座標の表示 */}
-      {jsonData && (
+      {/* マスクを適用した結果画像の表示 */}
+      {finalImageSrc && (
         <div className="mt-4">
-          <p>顔座標: {JSON.stringify(jsonData)}</p>
+          <img
+            src={finalImageSrc}
+            alt="Final image with mask"
+            className="w-80 h-80 object-cover border rounded-lg"
+          />
         </div>
       )}
 
-      {/* MUIボタン */}
+      {/* 顔座標の表示 */}
+      {jsonData && (
+        <div className="mt-4">
+          <p>顔の座標: {JSON.stringify(jsonData)}</p>
+        </div>
+      )}
+
       <div className="mt-4 flex space-x-4">
         <Button variant="text" onClick={handleDeleteImage}>画像を削除</Button>
         {filePreview && (
-          <Button variant="contained" color="primary" onClick={getFaceCoordinates}>顔座標を取得</Button>
+          <Button variant="contained" color="primary" onClick={getFaceCoordinates}>顔をマスク</Button>
         )}
       </div>
+
+      {/* Canvas (hidden) */}
+      <canvas ref={canvasRef} className="hidden"></canvas>
     </div>
   );
 }
